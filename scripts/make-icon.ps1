@@ -3,7 +3,7 @@ param(
 	# Six comma-separated channels: two background/header colours, then the header.
 	[string]$Palette = '19,26,38,41,98,255',
 	[switch]$ShowVolume,
-	[ValidateSet('Candles', 'Branch')]
+	[ValidateSet('Candles', 'Branch', 'Live')]
 	[string]$Motif = 'Candles'
 )
 
@@ -23,6 +23,47 @@ function New-Tile([int]$size, [System.Drawing.Graphics]$g, [double]$s) {
 	$g.FillRectangle($blue, 0, 0, $s, $s * 0.16)
 	$bg.Dispose()
 	$blue.Dispose()
+}
+
+function New-LiveIcon([int]$size) {
+	$s = [double]$size
+	$bmp = New-Object System.Drawing.Bitmap($size, $size)
+	$g = [System.Drawing.Graphics]::FromImage($bmp)
+	New-Tile $size $g $s
+
+	$stroke = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(255, 240, 245, 255))
+	$accent = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(255, $rgb[3], $rgb[4], $rgb[5]))
+	$lineW = [Math]::Max(1.5, $s * 0.06)
+
+	# A polyline rising to the right, ending on the dot that marks the newest
+	# bar: the shape of a live feed rather than of a closed chart.
+	$points = @(
+		@(0.12, 0.68), @(0.26, 0.56), @(0.38, 0.62),
+		@(0.52, 0.44), @(0.64, 0.50), @(0.76, 0.30)
+	)
+	$path = New-Object System.Drawing.Drawing2D.GraphicsPath
+	for ($i = 0; $i -lt $points.Count - 1; $i++) {
+		$path.AddLine(
+			($s * $points[$i][0]), ($s * $points[$i][1]),
+			($s * $points[$i + 1][0]), ($s * $points[$i + 1][1])
+		)
+	}
+	$pen = New-Object System.Drawing.Pen($stroke, $lineW)
+	$pen.StartCap = [System.Drawing.Drawing2D.LineCap]::Round
+	$pen.EndCap = [System.Drawing.Drawing2D.LineCap]::Round
+	$pen.LineJoin = [System.Drawing.Drawing2D.LineJoin]::Round
+	$g.DrawPath($pen, $path)
+	$pen.Dispose()
+
+	# A halo behind the marker, so the newest point reads as lit up.
+	$halo = $s * 0.19
+	$haloBrush = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(70, $rgb[3], $rgb[4], $rgb[5]))
+	$g.FillEllipse($haloBrush, ($s * 0.76 - $halo), ($s * 0.30 - $halo), $halo * 2, $halo * 2)
+	$g.FillEllipse($accent, ($s * 0.76 - $s * 0.075), ($s * 0.30 - $s * 0.075), $s * 0.15, $s * 0.15)
+
+	$g.Dispose()
+	$stroke.Dispose(); $accent.Dispose(); $haloBrush.Dispose()
+	return $bmp
 }
 
 function New-BranchIcon([int]$size) {
@@ -162,7 +203,11 @@ function ConvertTo-Dib([System.Drawing.Bitmap]$bmp) {
 
 $images = @()
 foreach ($size in $sizes) {
-	$bmp = if ($Motif -eq 'Branch') { New-BranchIcon $size } else { New-CandleIcon $size }
+	$bmp = switch ($Motif) {
+		'Branch' { New-BranchIcon $size }
+		'Live' { New-LiveIcon $size }
+		default { New-CandleIcon $size }
+	}
 	$images += , @{ Size = $size; Bytes = (ConvertTo-Dib $bmp) }
 	$bmp.Dispose()
 }

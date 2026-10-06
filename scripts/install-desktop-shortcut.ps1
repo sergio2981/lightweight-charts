@@ -9,7 +9,8 @@ param(
 
 $icons = @(
 	@{ Path = 'scripts\lwc.ico'; Palette = '19,26,38,41,98,255'; Switch = @() },
-	@{ Path = 'scripts\lwc-demo.ico'; Palette = '45,26,14,240,160,32'; Switch = @('-ShowVolume') }
+	@{ Path = 'scripts\lwc-demo.ico'; Palette = '45,26,14,240,160,32'; Switch = @('-ShowVolume') },
+	@{ Path = 'scripts\lwc-live.ico'; Palette = '14,20,28,0,200,150'; Switch = @('-Motif', 'Live') }
 )
 
 foreach ($icon in $icons) {
@@ -32,6 +33,12 @@ $targets = @(
 		Target = Join-Path $Repo 'demo\index.html'
 		Icon = Join-Path $Repo 'scripts\lwc-demo.ico'
 		Description = 'Lightweight Charts - demo de velas con volumen y media movil'
+	},
+	@{
+		Name = 'Lightweight Charts - Datos reales'
+		Target = Join-Path $Repo 'demo\live.html'
+		Icon = Join-Path $Repo 'scripts\lwc-live.ico'
+		Description = 'Lightweight Charts - velas reales de Binance, con auto-refresh'
 	}
 )
 
