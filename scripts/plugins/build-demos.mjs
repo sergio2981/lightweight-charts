@@ -20,7 +20,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
-import { execFileSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import { loadTargetPlugins } from './utils.mjs';
@@ -55,20 +55,35 @@ async function loadVite(packageDir) {
  * rebuilt here — which is what makes this work on a fresh checkout, and keeps a
  * stale toolkit out of the deployed pages.
  */
+/**
+ * How to launch pnpm from Node. On Windows pnpm is a `.cmd` shim, which Node
+ * refuses to execute directly (EINVAL since the CVE-2024-27980 fix), so there
+ * the invocation is handed to the shell as one command string. The arguments
+ * are fixed package filters with no spaces or shell metacharacters, so joining
+ * them is safe.
+ */
+function runPnpm(args) {
+	const result = process.platform === 'win32'
+		? spawnSync(['pnpm', ...args].join(' '), { cwd: repoRoot, stdio: 'inherit', shell: true })
+		: spawnSync('pnpm', args, { cwd: repoRoot, stdio: 'inherit' });
+	if (result.error) {
+		throw result.error;
+	}
+	if (result.status !== 0) {
+		process.exit(result.status ?? 1);
+	}
+}
+
 function buildDependencies() {
 	if (!fs.existsSync(path.join(repoRoot, 'dist', 'lightweight-charts.production.mjs'))) {
 		throw new Error('The library is not built. Run `pnpm build` (or `pnpm build:prod`) first.');
 	}
 	console.log('📦 Building @tradingview/lwc-toolkit and @tradingview/lwc-plugin-preview-kit...');
-	execFileSync(
-		'pnpm',
-		[
-			'--filter', '@tradingview/lwc-toolkit',
-			'--filter', '@tradingview/lwc-plugin-preview-kit',
-			'build',
-		],
-		{ cwd: repoRoot, stdio: 'inherit' }
-	);
+	runPnpm([
+		'--filter', '@tradingview/lwc-toolkit',
+		'--filter', '@tradingview/lwc-plugin-preview-kit',
+		'build',
+	]);
 }
 
 /**

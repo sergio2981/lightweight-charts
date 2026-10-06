@@ -25,7 +25,7 @@ import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { loadTargetPlugins } from './utils.mjs';
+import { loadTargetPlugins, tarCommand } from './utils.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const DEFAULT_PORT = 4873;
@@ -49,7 +49,7 @@ function packPlugins(plugins, dir) {
 		}
 		const buffer = fs.readFileSync(tarball);
 		const manifest = JSON.parse(
-			execFileSync('tar', ['-xzOf', tarball, 'package/package.json'], { encoding: 'utf-8' })
+			execFileSync(tarCommand(), ['-xzOf', tarball, 'package/package.json'], { encoding: 'utf-8' })
 		);
 		packages.set(manifest.name, { file, buffer, manifest });
 		console.log(`  📦 ${manifest.name}@${manifest.version}`);

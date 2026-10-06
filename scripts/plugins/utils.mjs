@@ -210,6 +210,23 @@ export function compareVersions(localVersion, remoteVersion) {
 }
 
 /**
+ * The `tar` executable to shell out to. Every tarball path handed to tar here
+ * is absolute, and on Windows that is ambiguous for GNU tar (Git for Windows
+ * ships one): it reads `C:\dir\file.tgz` as a `host:path` spec and dies with
+ * "Cannot connect to C:". The bsdtar that ships with Windows takes the path
+ * literally, so prefer it when it is present.
+ *
+ * @returns {string} An executable name or absolute path for execFileSync.
+ */
+export function tarCommand() {
+	if (process.platform !== 'win32') {
+		return 'tar';
+	}
+	const windowsTar = path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'tar.exe');
+	return fs.existsSync(windowsTar) ? windowsTar : 'tar';
+}
+
+/**
  * Parses an error from querying the npm registry.
  * Returns null if the package is unpublished (E404), otherwise throws.
  *
@@ -683,7 +700,7 @@ export function verifyPackContent(tarballPath, packageJson) {
 
 	let tarList;
 	try {
-		tarList = execFileSync('tar', ['-tf', tarballPath], { encoding: 'utf-8' });
+		tarList = execFileSync(tarCommand(), ['-tf', tarballPath], { encoding: 'utf-8' });
 	} catch (e) {
 		return { valid: false, errors: [`Failed to inspect tarball with tar -tf: ${e.message}`] };
 	}
@@ -733,7 +750,7 @@ export function fetchPublishedPackage(packageName, version, destDir) {
 	if (!tgz) {
 		throw new Error(`npm pack produced no tarball for ${packageName}@${version}`);
 	}
-	execFileSync('tar', ['-xzf', path.join(destDir, tgz), '-C', destDir]);
+	execFileSync(tarCommand(), ['-xzf', path.join(destDir, tgz), '-C', destDir]);
 	return path.join(destDir, 'package');
 }
 

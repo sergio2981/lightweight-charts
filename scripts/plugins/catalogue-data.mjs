@@ -4,7 +4,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import semver from 'semver';
-import { findWorkspacePlugins, validatePackageMetadata } from './utils.mjs';
+import { findWorkspacePlugins, tarCommand, validatePackageMetadata } from './utils.mjs';
 
 export const DEFAULT_REGISTRY = 'https://registry.npmjs.org';
 
@@ -134,14 +134,14 @@ export async function fetchTarballReadme(tarballUrl, options = {}) {
 		}
 		const file = path.join(tempDir, 'package.tgz');
 		fs.writeFileSync(file, buffer);
-		const entry = execFileSync('tar', ['-tzf', file], { encoding: 'utf-8' })
+		const entry = execFileSync(tarCommand(), ['-tzf', file], { encoding: 'utf-8' })
 			.split(/\r?\n/)
 			.map(line => line.trim())
 			.find(line => /^package\/readme(\.[^/]+)?$/i.test(line));
 		if (!entry) {
 			return null;
 		}
-		const readme = execFileSync('tar', ['-xzOf', file, entry], { encoding: 'utf-8' }).trim();
+		const readme = execFileSync(tarCommand(), ['-xzOf', file, entry], { encoding: 'utf-8' }).trim();
 		return readme || null;
 	} finally {
 		fs.rmSync(tempDir, { recursive: true, force: true });
