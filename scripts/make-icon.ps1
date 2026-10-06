@@ -2,17 +2,16 @@ param(
 	[string]$OutPath = "$PSScriptRoot\lwc.ico",
 	# Six comma-separated channels: two background/header colours, then the header.
 	[string]$Palette = '19,26,38,41,98,255',
-	[switch]$ShowVolume
+	[switch]$ShowVolume,
+	[ValidateSet('Candles', 'Branch')]
+	[string]$Motif = 'Candles'
 )
 
 Add-Type -AssemblyName System.Drawing
 
 $rgb = $Palette.Split(',') | ForEach-Object { [int]$_.Trim() }
 
-function New-CandleIcon([int]$size) {
-	$s = [double]$size
-	$bmp = New-Object System.Drawing.Bitmap($size, $size)
-	$g = [System.Drawing.Graphics]::FromImage($bmp)
+function New-Tile([int]$size, [System.Drawing.Graphics]$g, [double]$s) {
 	$g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
 	$g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
 	$g.Clear([System.Drawing.Color]::Transparent)
@@ -22,6 +21,63 @@ function New-CandleIcon([int]$size) {
 
 	$blue = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(255, $rgb[3], $rgb[4], $rgb[5]))
 	$g.FillRectangle($blue, 0, 0, $s, $s * 0.16)
+	$bg.Dispose()
+	$blue.Dispose()
+}
+
+function New-BranchIcon([int]$size) {
+	$s = [double]$size
+	$bmp = New-Object System.Drawing.Bitmap($size, $size)
+	$g = [System.Drawing.Graphics]::FromImage($bmp)
+	New-Tile $size $g $s
+
+	$stroke = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(255, 240, 245, 255))
+	$accent = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(255, $rgb[3], $rgb[4], $rgb[5]))
+	$lineW = [Math]::Max(1.5, $s * 0.055)
+	$r = $s * 0.11
+
+	$trunkX = $s * 0.30
+	$tipX = $s * 0.72
+	$tipY = $s * 0.54
+
+	# Main trunk, from the head commit down to the base commit.
+	$trunk = New-Object System.Drawing.RectangleF(($trunkX - $lineW / 2), ($s * 0.26), $lineW, ($s * 0.74 - $s * 0.26))
+	$g.FillRectangle($stroke, $trunk)
+
+	# The fork: one curve leaving the trunk for the shorter branch, drawn to the
+	# edge of the branch commit so no separate connector is needed.
+	$branch = New-Object System.Drawing.Drawing2D.GraphicsPath
+	$branch.AddBezier(
+		$trunkX, ($s * 0.50),
+		$trunkX, ($s * 0.54),
+		($s * 0.50), ($s * 0.50),
+		($tipX - $r), $tipY
+	)
+	$pen = New-Object System.Drawing.Pen($stroke, $lineW)
+	$pen.StartCap = [System.Drawing.Drawing2D.LineCap]::Round
+	$pen.EndCap = [System.Drawing.Drawing2D.LineCap]::Round
+	$g.DrawPath($pen, $branch)
+	$pen.Dispose()
+
+	# Commits: two on the trunk (head and base), one at the branch tip.
+	$g.FillEllipse($stroke, ($trunkX - $r), ($s * 0.24 - $r), $r * 2, $r * 2)
+	$g.FillEllipse($stroke, ($trunkX - $r), ($s * 0.74 - $r), $r * 2, $r * 2)
+	$g.FillEllipse($accent, ($tipX - $r), ($tipY - $r), $r * 2, $r * 2)
+
+	$g.Dispose()
+	$stroke.Dispose(); $accent.Dispose()
+	return $bmp
+}
+
+function New-CandleIcon([int]$size) {
+	$s = [double]$size
+	$bmp = New-Object System.Drawing.Bitmap($size, $size)
+	$g = [System.Drawing.Graphics]::FromImage($bmp)
+	$g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+	$g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+	$g.Clear([System.Drawing.Color]::Transparent)
+
+	New-Tile $size $g $s
 
 	$up = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(255, 38, 166, 154))
 	$down = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(255, 239, 83, 80))
@@ -58,7 +114,7 @@ function New-CandleIcon([int]$size) {
 	}
 
 	$g.Dispose()
-	$bg.Dispose(); $blue.Dispose(); $up.Dispose(); $down.Dispose(); $wick.Dispose()
+	$up.Dispose(); $down.Dispose(); $wick.Dispose()
 	return $bmp
 }
 
@@ -106,7 +162,7 @@ function ConvertTo-Dib([System.Drawing.Bitmap]$bmp) {
 
 $images = @()
 foreach ($size in $sizes) {
-	$bmp = New-CandleIcon $size
+	$bmp = if ($Motif -eq 'Branch') { New-BranchIcon $size } else { New-CandleIcon $size }
 	$images += , @{ Size = $size; Bytes = (ConvertTo-Dib $bmp) }
 	$bmp.Dispose()
 }
