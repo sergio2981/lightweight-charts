@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lightweight Charts — demo de velas</title>
+<style>
+	:root {
+		--bg: #0f1420;
+		--panel: #161c2b;
+		--border: #232b3d;
+		--text: #d5dae6;
+		--muted: #7c879e;
+		--accent: #2962ff;
+		--up: #26a69a;
+		--down: #ef5350;
+	}
+	* { box-sizing: border-box; }
+	body {
+		margin: 0;
+		background: var(--bg);
+		color: var(--text);
+		font: 14px/1.5 "Segoe UI", system-ui, sans-serif;
+	}
+	header {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 12px;
+		align-items: center;
+		padding: 12px 16px;
+		border-bottom: 1px solid var(--border);
+		background: var(--panel);
+	}
+	h1 { font-size: 15px; font-weight: 600; margin: 0 12px 0 0; }
+	h1 span { color: var(--muted); font-weight: 400; }
+	.spacer { flex: 1; }
+	button {
+		background: #1e263a;
+		color: var(--text);
+		border: 1px solid var(--border);
+		border-radius: 6px;
+		padding: 6px 12px;
+		font: inherit;
+		font-size: 13px;
+		cursor: pointer;
+	}
+	button:hover { border-color: var(--accent); }
+	button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+	#chart { width: 100%; height: 520px; }
+	#readout {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 18px;
+		padding: 10px 16px;
+		border-top: 1px solid var(--border);
+		font-variant-numeric: tabular-nums;
+		font-size: 13px;
+	}
+	#readout b { color: var(--muted); font-weight: 500; margin-right: 4px; }
+	.up { color: var(--up); }
+	.down { color: var(--down); }
+	footer { padding: 10px 16px; color: var(--muted); font-size: 12px; }
+</style>
+</head>
+<body>
+
+<header>
+	<h1>LWC <span>demo de velas</span></h1>
+	<button data-range="1D">1D</button>
+	<button data-range="1W">1W</button>
+	<button data-range="1M">1M</button>
+	<button data-range="3M">3M</button>
+	<button data-range="ALL">Todo</button>
+	<span class="spacer"></span>
+	<button id="live" aria-pressed="false">Simular en vivo</button>
+	<button id="theme">Tema claro</button>
+</header>
+
+<div id="chart"></div>
+
+<div id="readout">
+	<span><b>OHLC</b><span id="ohlc">—</span></span>
+	<span><b>Volumen</b><span id="volume">—</span></span>
+	<span><b>Media 20</b><span id="ma">—</span></span>
+	<span><b>Cambio</b><span id="change">—</span></span>
+</div>
+
+<footer>
+	Datos sintéticos generados en el navegador (random walk con cluster de volatilidad), 1 vela por hora en sesiones de 6,5 h.
+	Servido desde <code>dist/lightweight-charts.standalone.production.js</code>.
+</footer>
+
+<script src="../dist/lightweight-charts.standalone.production.js"></script>
+<script>
+const {
+	createChart, ColorType, CrosshairMode, LineStyle,
+	CandlestickSeries, HistogramSeries, LineSeries,
+} = LightweightCharts;
+
+const HOUR = 3600;
+const SESSION_BARS = 7;
+const BARS_PER_DAY = SESSION_BARS + 2; // sesión + hueco de la noche
+
+/* --- Generador determinista: los mismos datos en cada recarga --- */
+function mulberry32(seed) {
+	return function () {
+		seed |= 0;
+		seed = seed + 0x6D2B79F5 | 0;
+		let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+		t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+		return ((t ^ t >>> 14) >>> 0) / 4294967296;
+	};
+}
+
+function gaussian(rand) {
+	let u = 0, v = 0;
+	while (u === 0) { u = rand(); }
+	while (v === 0) { v = rand(); }
+	return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+}
+
+function generateCandles(count, rand) {
+	const candles = [];
+	const volumes = [];
+	const start = Math.floor(Date.UTC(2025, 0, 6, 9, 0) / 1000);
+	let price = 100;
+	let drift = 0;
+	let vol = 0.012;
+
+	for (let i = 0; i < count; i++) {
+		const slot = i % BARS_PER_DAY;
+		const dayOffset = Math.floor(i / BARS_PER_DAY);
+		const time = start + dayOffset * 24 * HOUR + (slot < SESSION_BARS ? slot * HOUR : 0);
+
+		if (slot >= SESSION_BARS) { continue; } // fuera de sesión
+
+		// volatilidad con cluster + deriva que cambia de signo
+		vol = 0.85 * vol + 0.15 * 0.012 + Math.abs(gaussian(rand)) * 0.0016;
+		if (rand() < 0.06) { drift = gaussian(rand) * 0.0025; }
+
+		const open = price;
+		const close = open * (1 + drift + vol * gaussian(rand));
+		const spread = vol * (0.6 + rand());
+		const high = Math.max(open, close) * (1 + spread * rand());
+		const low = Math.min(open, close) * (1 - spread * rand());
+		const volume = Math.round(1_200_000 * (0.4 + rand() * 1.4) * (1 + Math.abs(close / open - 1) * 40));
+
+		candles.push({ time, open, high, low, close });
+		volumes.push({ time, value: volume, color: close >= open ? 'rgba(38,166,154,0.5)' : 'rgba(239,83,80,0.5)' });
+		price = close;
+	}
+
+	return { candles, volumes };
+}
+
+function movingAverage(candles, period) {
+	const out = [];
+	let sum = 0;
+	for (let i = 0; i < candles.length; i++) {
+		sum += candles[i].close;
+		if (i >= period) { sum -= candles[i - period].close; }
+		if (i >= period - 1) { out.push({ time: candles[i].time, value: sum / period }); }
+	}
+	return out;
+}
+
+const rand = mulberry32(20250607);
+const { candles, volumes } = generateCandles(BARS_PER_DAY * 130, rand);
+
+const fmtPrice = value => value.toFixed(2);
+const fmtVolume = value => value.toLocaleString('es-ES');
+
+const container = document.getElementById('chart');
+
+const chart = createChart(container, {
+	width: container.clientWidth,
+	height: container.clientHeight,
+	layout: {
+		background: { type: ColorType.Solid, color: '#0f1420' },
+		textColor: '#d5dae6',
+		attributionLogo: false,
+	},
+	grid: {
+		vertLines: { color: 'rgba(35,43,61,0.6)' },
+		horzLines: { color: 'rgba(35,43,61,0.6)' },
+	},
+	crosshair: {
+		mode: CrosshairMode.Normal,
+		vertLine: { color: '#4a5570', width: 1, style: LineStyle.Dashed, labelBackgroundColor: '#2962ff' },
+		horzLine: { color: '#4a5570', width: 1, style: LineStyle.Dashed, labelBackgroundColor: '#2962ff' },
+	},
+	timeScale: { borderColor: '#232b3d', timeVisible: true, secondsVisible: false, rightOffset: 6 },
+	rightPriceScale: { borderColor: '#232b3d', scaleMargins: { top: 0.08, bottom: 0.26 } },
+	handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
+	handleScale: { axisPressedMouseMove: true, mouseWheel: true, pinch: true },
+});
+
+const candleSeries = chart.addSeries(CandlestickSeries, {
+	upColor: '#26a69a',
+	downColor: '#ef5350',
+	wickUpColor: '#26a69a',
+	wickDownColor: '#ef5350',
+	borderVisible: false,
+	priceLineVisible: true,
+	priceLineColor: '#4a5570',
+	priceLineStyle: LineStyle.Dotted,
+});
+
+candleSeries.setData(candles);
+candleSeries.createPriceLine({
+	price: candles[candles.length - 1].close,
+	color: '#2962ff',
+	lineWidth: 1,
+	lineStyle: LineStyle.Dashed,
+	axisLabelVisible: true,
+	title: 'Último',
+});
+
+const volumeSeries = chart.addSeries(HistogramSeries, {
+	priceFormat: { type: 'volume' },
+	priceScaleId: 'volume',
+	lastValueVisible: false,
+	priceLineVisible: false,
+});
+volumeSeries.priceScale().applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } });
+volumeSeries.setData(volumes);
+
+const maSeries = chart.addSeries(LineSeries, {
+	color: '#f0a028',
+	lineWidth: 2,
+	lineStyle: LineStyle.Solid,
+	priceLineVisible: false,
+	lastValueVisible: false,
+	crosshairMarkerVisible: false,
+});
+maSeries.setData(movingAverage(candles, 20));
+
+chart.timeScale().fitContent();
+
+/* --- Lectura del crosshair --- */
+const ohlcEl = document.getElementById('ohlc');
+const volumeEl = document.getElementById('volume');
+const maEl = document.getElementById('ma');
+const changeEl = document.getElementById('change');
+
+function colorize(el, value, suffix = '') {
+	el.textContent = value + suffix;
+	el.className = value.startsWith('-') ? 'down' : 'up';
+}
+
+chart.subscribeCrosshairMove(param => {
+	const bar = param.seriesData.get(candleSeries);
+	if (!bar) {
+		ohlcEl.textContent = volumeEl.textContent = maEl.textContent = changeEl.textContent = '—';
+		return;
+	}
+	const delta = bar.close - bar.open;
+	ohlcEl.textContent = `${fmtPrice(bar.open)} / ${fmtPrice(bar.high)} / ${fmtPrice(bar.low)} / ${fmtPrice(bar.close)}`;
+	ohlcEl.className = delta >= 0 ? 'up' : 'down';
+	volumeEl.textContent = fmtVolume(param.seriesData.get(volumeSeries)?.value ?? 0);
+	maEl.textContent = fmtPrice(param.seriesData.get(maSeries)?.value ?? NaN);
+	colorize(changeEl, `${delta >= 0 ? '+' : ''}${(delta / bar.open * 100).toFixed(2)}`, '%');
+});
+
+/* --- Rangos rápidos --- */
+const RANGES = { '1D': 8, '1W': BARS_PER_DAY, '1M': BARS_PER_DAY * 22, '3M': BARS_PER_DAY * 65 };
+document.querySelectorAll('button[data-range]').forEach(button => {
+	button.addEventListener('click', () => {
+		const key = button.dataset.range;
+		const total = candles.length;
+		const to = total - 1;
+		const from = RANGES[key] ? Math.max(0, to - RANGES[key]) : 0;
+		chart.timeScale().setVisibleLogicalRange({ from, to });
+	});
+});
+
+/* --- Tema claro --- */
+const themeButton = document.getElementById('theme');
+let light = false;
+themeButton.addEventListener('click', () => {
+	light = !light;
+	const bg = light ? '#ffffff' : '#0f1420';
+	chart.applyOptions({
+		layout: { background: { type: ColorType.Solid, color: bg }, textColor: light ? '#1b2231' : '#d5dae6' },
+		grid: {
+			vertLines: { color: light ? 'rgba(0,0,0,0.08)' : 'rgba(35,43,61,0.6)' },
+			horzLines: { color: light ? 'rgba(0,0,0,0.08)' : 'rgba(35,43,61,0.6)' },
+		},
+		timeScale: { borderColor: light ? '#d5dae6' : '#232b3d' },
+		rightPriceScale: { borderColor: light ? '#d5dae6' : '#232b3d' },
+	});
+	themeButton.textContent = light ? 'Tema oscuro' : 'Tema claro';
+});
+
+/* --- Simulación en vivo: la vela actual se mueve cada segundo --- */
+const liveButton = document.getElementById('live');
+let timer = null;
+
+function tick() {
+	const last = candles[candles.length - 1];
+	const drift = (rand() - 0.48) * last.close * 0.0012;
+	const close = Math.max(0.01, last.close + drift);
+	const updated = {
+		...last,
+		close,
+		high: Math.max(last.high, close),
+		low: Math.min(last.low, close),
+	};
+
+	candleSeries.update(updated);
+	volumeSeries.update({
+		time: updated.time,
+		value: last.volume + Math.round(rand() * 40_000),
+		color: updated.close >= updated.open ? 'rgba(38,166,154,0.5)' : 'rgba(239,83,80,0.5)',
+	});
+	maSeries.update(movingAverage(candles, 20).at(-1));
+}
+
+liveButton.addEventListener('click', () => {
+	const on = liveButton.getAttribute('aria-pressed') === 'true';
+	liveButton.setAttribute('aria-pressed', String(!on));
+	if (on) {
+		clearInterval(timer);
+		timer = null;
+		return;
+	}
+	tick();
+	timer = setInterval(tick, 1000);
+});
+
+/* --- Responsive --- */
+new ResizeObserver(entries => {
+	const { width, height } = entries[0].contentRect;
+	chart.applyOptions({ width, height });
+}).observe(container);
+</script>
+</body>
+</html>
