@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lightweight Charts — velas reales (Binance)</title>
+<style>
+	:root {
+		--bg: #0f1420;
+		--panel: #161c2b;
+		--border: #232b3d;
+		--text: #d5dae6;
+		--muted: #7c879e;
+		--accent: #2962ff;
+		--up: #26a69a;
+		--down: #ef5350;
+	}
+	* { box-sizing: border-box; }
+	body {
+		margin: 0;
+		background: var(--bg);
+		color: var(--text);
+		font: 14px/1.5 "Segoe UI", system-ui, sans-serif;
+	}
+	header {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 10px;
+		align-items: center;
+		padding: 12px 16px;
+		border-bottom: 1px solid var(--border);
+		background: var(--panel);
+	}
+	h1 { font-size: 15px; font-weight: 600; margin: 0 14px 0 0; }
+	h1 span { color: var(--muted); font-weight: 400; }
+	select, input {
+		background: #1e263a;
+		color: var(--text);
+		border: 1px solid var(--border);
+		border-radius: 6px;
+		padding: 6px 8px;
+		font: inherit;
+		font-size: 13px;
+	}
+	input { width: 130px; text-transform: uppercase; }
+	label { color: var(--muted); font-size: 12px; margin-right: 4px; }
+	button {
+		background: #1e263a;
+		color: var(--text);
+		border: 1px solid var(--border);
+		border-radius: 6px;
+		padding: 6px 12px;
+		font: inherit;
+		font-size: 13px;
+		cursor: pointer;
+	}
+	button:hover { border-color: var(--accent); }
+	button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+	.spacer { flex: 1; }
+	#chart { width: 100%; height: 540px; }
+	#status {
+		padding: 8px 16px;
+		border-top: 1px solid var(--border);
+		color: var(--muted);
+		font-size: 12px;
+	}
+	#status.error { color: var(--down); }
+	#stats {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 18px;
+		padding: 12px 16px 4px;
+		font-variant-numeric: tabular-nums;
+		font-size: 13px;
+	}
+	#stats b { color: var(--muted); font-weight: 500; margin-right: 4px; }
+	.up { color: var(--up); }
+	.down { color: var(--down); }
+	footer { padding: 8px 16px 16px; color: var(--muted); font-size: 12px; }
+	code { background: #1e263a; padding: 1px 5px; border-radius: 4px; }
+</style>
+</head>
+<body>
+
+<header>
+	<h1>LWC <span>velas reales</span></h1>
+	<label for="symbol">Símbolo</label>
+	<input id="symbol" list="symbols" value="BTCUSDT" spellcheck="false">
+	<datalist id="symbols">
+		<option value="BTCUSDT"></option>
+		<option value="ETHUSDT"></option>
+		<option value="SOLUSDT"></option>
+		<option value="BNBUSDT"></option>
+		<option value="XRPUSDT"></option>
+		<option value="DOGEUSDT"></option>
+	</datalist>
+	<label for="interval">Vela</label>
+	<select id="interval">
+		<option value="1m">1 minuto</option>
+		<option value="5m">5 minutos</option>
+		<option value="15m">15 minutos</option>
+		<option value="1h" selected>1 hora</option>
+		<option value="4h">4 horas</option>
+		<option value="1d">1 día</option>
+	</select>
+	<label for="bars">Velas</label>
+	<select id="bars">
+		<option value="200">200</option>
+		<option value="500" selected>500</option>
+		<option value="1000">1000</option>
+	</select>
+	<button id="load">Cargar</button>
+	<span class="spacer"></span>
+	<button id="live" aria-pressed="false">Auto-refresh</button>
+</header>
+
+<div id="chart"></div>
+<div id="status">Preparando…</div>
+
+<div id="stats">
+	<span><b>Último</b><span id="last">—</span></span>
+	<span><b>Cambio</b><span id="change">—</span></span>
+	<span><b>Máx / mín</b><span id="range">—</span></span>
+	<span><b>Volumen</b><span id="volume">—</span></span>
+	<span><b>Operaciones</b><span id="trades">—</span></span>
+	<span><b>Media 20</b><span id="ma">—</span></span>
+</div>
+
+<footer>
+	Datos de <code>GET api.binance.com/api/v3/klines</code>, endpoint público: sin clave de API, con
+	<code>Access-Control-Allow-Origin: *</code>, así que la petición sale directo del navegador.
+	El <code>time</code> de cada vela es el <code>openTime</code> en segundos UTC.
+</footer>
+
+<script src="../dist/lightweight-charts.standalone.production.js"></script>
+<script>
+const {
+	createChart, ColorType, CrosshairMode, LineStyle,
+	CandlestickSeries, HistogramSeries, LineSeries,
+} = LightweightCharts;
+
+const BASE = 'https://api.binance.com/api/v3/klines';
+const REFRESH_MS = 10_000;
+
+const statusEl = document.getElementById('status');
+const symbolInput = document.getElementById('symbol');
+const intervalSelect = document.getElementById('interval');
+const barsSelect = document.getElementById('bars');
+const liveButton = document.getElementById('live');
+
+const fmtPrice = v => Number(v).toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmtVolume = v => Number(v).toLocaleString('es-ES', { maximumFractionDigits: 0 });
+
+function movingAverage(bars, period) {
+	const out = [];
+	let sum = 0;
+	for (let i = 0; i < bars.length; i++) {
+		sum += bars[i].close;
+		if (i >= period) { sum -= bars[i - period].close; }
+		if (i >= period - 1) { out.push({ time: bars[i].time, value: sum / period }); }
+	}
+	return out;
+}
+
+/* Binance returns rows as
+   [openTime, open, high, low, close, volume, closeTime, quoteVolume, trades, ...]
+   and the chart wants seconds, so only the first six fields are used. */
+function toBars(rows) {
+	return rows.map(r => ({
+		time: Math.floor(r[0] / 1000),
+		open: +r[1],
+		high: +r[2],
+		low: +r[3],
+		close: +r[4],
+		volume: +r[5],
+		trades: r[8],
+	}));
+}
+
+function volumePoints(bars) {
+	return bars.map(b => ({
+		time: b.time,
+		value: b.volume,
+		color: b.close >= b.open ? 'rgba(38,166,154,0.5)' : 'rgba(239,83,80,0.5)',
+	}));
+}
+
+const container = document.getElementById('chart');
+
+const chart = createChart(container, {
+	width: container.clientWidth,
+	height: container.clientHeight,
+	layout: {
+		background: { type: ColorType.Solid, color: '#0f1420' },
+		textColor: '#d5dae6',
+		attributionLogo: false,
+	},
+	grid: {
+		vertLines: { color: 'rgba(35,43,61,0.6)' },
+		horzLines: { color: 'rgba(35,43,61,0.6)' },
+	},
+	crosshair: {
+		mode: CrosshairMode.Normal,
+		vertLine: { color: '#4a5570', width: 1, style: LineStyle.Dashed, labelBackgroundColor: '#2962ff' },
+		horzLine: { color: '#4a5570', width: 1, style: LineStyle.Dashed, labelBackgroundColor: '#2962ff' },
+	},
+	timeScale: { borderColor: '#232b3d', timeVisible: true, secondsVisible: false, rightOffset: 6 },
+	rightPriceScale: { borderColor: '#232b3d', scaleMargins: { top: 0.08, bottom: 0.26 } },
+});
+
+const candleSeries = chart.addSeries(CandlestickSeries, {
+	upColor: '#26a69a',
+	downColor: '#ef5350',
+	wickUpColor: '#26a69a',
+	wickDownColor: '#ef5350',
+	borderVisible: false,
+});
+
+const volumeSeries = chart.addSeries(HistogramSeries, {
+	priceFormat: { type: 'volume' },
+	priceScaleId: 'volume',
+	lastValueVisible: false,
+	priceLineVisible: false,
+});
+volumeSeries.priceScale().applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } });
+
+const maSeries = chart.addSeries(LineSeries, {
+	color: '#f0a028',
+	lineWidth: 2,
+	priceLineVisible: false,
+	lastValueVisible: false,
+});
+maSeries.setData([]);
+
+let bars = [];
+let lastAppliedTime = 0;
+let priceLine = null;
+
+function renderStats() {
+	const last = bars.at(-1);
+	if (!last) { return; }
+	const delta = last.close - last.open;
+	const pct = Number(((delta / last.open) * 100).toFixed(2));
+
+	document.getElementById('last').textContent = fmtPrice(last.close);
+	document.getElementById('last').className = delta >= 0 ? 'up' : 'down';
+
+	const changeEl = document.getElementById('change');
+	changeEl.textContent = `${delta >= 0 ? '+' : '-'}${fmtPrice(Math.abs(delta))} (${pct > 0 ? '+' : pct < 0 ? '-' : ''}${Math.abs(pct).toFixed(2)}%)`;
+	changeEl.className = delta >= 0 ? 'up' : 'down';
+
+	const highs = bars.map(b => b.high);
+	const lows = bars.map(b => b.low);
+	document.getElementById('range').textContent = `${fmtPrice(Math.max(...highs))} / ${fmtPrice(Math.min(...lows))}`;
+	document.getElementById('volume').textContent = fmtVolume(bars.reduce((sum, b) => sum + b.volume, 0));
+	document.getElementById('trades').textContent = fmtVolume(bars.reduce((sum, b) => sum + b.trades, 0));
+
+	const ma = movingAverage(bars, 20).at(-1);
+	document.getElementById('ma').textContent = ma === undefined ? '—' : fmtPrice(ma.value);
+
+	if (priceLine !== null) { candleSeries.removePriceLine(priceLine); }
+	priceLine = candleSeries.createPriceLine({
+		price: last.close,
+		color: '#2962ff',
+		lineWidth: 1,
+		lineStyle: LineStyle.Dashed,
+		title: 'Último',
+	});
+}
+
+function setStatus(text, isError = false) {
+	statusEl.textContent = text;
+	statusEl.classList.toggle('error', isError);
+}
+
+/* A rejected symbol comes back from Binance as a 400 whose body says
+   "Invalid symbol", but that response carries no Access-Control-Allow-Origin,
+   so the browser blocks it and fetch() only reports "Failed to fetch". Spelling
+   that out saves guessing. */
+function describeError(error) {
+	if (error instanceof TypeError) {
+		return `${error.message} — normalmente es un símbolo inexistente, o la red bloqueó api.binance.com`;
+	}
+	return error.message;
+}
+
+async function fetchKlines(limit) {
+	const symbol = symbolInput.value.trim().toUpperCase();
+	const url = `${BASE}?symbol=${encodeURIComponent(symbol)}&interval=${intervalSelect.value}&limit=${limit}`;
+	const response = await fetch(url);
+	if (!response.ok) {
+		// Binance answers 400 with a JSON body that names the offending field.
+		const detail = await response.json().catch(() => null);
+		const reason = detail?.msg ?? response.statusText;
+		throw new Error(`${response.status} ${reason}`);
+	}
+	return toBars(await response.json());
+}
+
+async function load() {
+	const symbol = symbolInput.value.trim().toUpperCase();
+	setStatus(`Pidiendo ${symbol} ${intervalSelect.value}…`);
+	try {
+		const next = await fetchKlines(Number(barsSelect.value));
+		if (next.length === 0) { throw new Error('La respuesta vino vacía'); }
+
+		bars = next;
+		candleSeries.setData(bars);
+		volumeSeries.setData(volumePoints(bars));
+		maSeries.setData(movingAverage(bars, 20));
+		chart.timeScale().fitContent();
+		lastAppliedTime = bars.at(-1).time;
+		renderStats();
+
+		const from = new Date(bars[0].time * 1000).toISOString().slice(0, 16).replace('T', ' ');
+		const to = new Date(bars.at(-1).time * 1000).toISOString().slice(0, 16).replace('T', ' ');
+		setStatus(`${bars.length} velas · ${from} → ${to} UTC · ${new Date().toLocaleTimeString('es-ES')}`);
+	} catch (error) {
+		setStatus(`No se pudo cargar: ${describeError(error)}`, true);
+	}
+}
+
+/* One request for the newest candles only. The last bar is updated in place
+   while it is still open, and appended once the exchange closes it. The
+   response holds two rows, but only the newer one is sent to update(): the
+   series rejects a time before its own last bar with "Cannot update oldest
+   data", and that row is already on the chart. */
+async function refresh() {
+	try {
+		const fresh = await fetchKlines(2);
+		for (const bar of fresh) {
+			if (bar.time < lastAppliedTime) { continue; }
+			const known = bars.find(b => b.time === bar.time);
+			if (known) { Object.assign(known, bar); } else { bars.push(bar); }
+
+			candleSeries.update({
+				time: bar.time,
+				open: bar.open,
+				high: bar.high,
+				low: bar.low,
+				close: bar.close,
+			});
+			volumeSeries.update(volumePoints([bar])[0]);
+			lastAppliedTime = bar.time;
+		}
+
+		const ma = movingAverage(bars, 20).at(-1);
+		if (ma !== undefined) { maSeries.update(ma); }
+		renderStats();
+		setStatus(`${bars.length} velas · actualizado ${new Date().toLocaleTimeString('es-ES')}`);
+	} catch (error) {
+		setStatus(`Refresh falló: ${describeError(error)}`, true);
+	}
+}
+
+document.getElementById('load').addEventListener('click', load);
+symbolInput.addEventListener('keydown', e => { if (e.key === 'Enter') { load(); } });
+
+let timer = null;
+liveButton.addEventListener('click', () => {
+	const on = liveButton.getAttribute('aria-pressed') === 'true';
+	liveButton.setAttribute('aria-pressed', String(!on));
+	if (on) {
+		clearInterval(timer);
+		timer = null;
+		return;
+	}
+	refresh();
+	timer = setInterval(refresh, REFRESH_MS);
+});
+
+new ResizeObserver(entries => {
+	const { width, height } = entries[0].contentRect;
+	chart.applyOptions({ width, height });
+}).observe(container);
+
+load();
+</script>
+</body>
+</html>
