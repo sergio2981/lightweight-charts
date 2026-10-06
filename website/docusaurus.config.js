@@ -3,6 +3,7 @@
 
 import path from 'node:path';
 import fs from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 
 import { themes } from 'prism-react-renderer';
 import pluginDocusaurus from 'docusaurus-plugin-typedoc';
@@ -18,7 +19,9 @@ const projectUrl = `https://github.com/${organizationName}/${projectName}`;
 const githubPagesUrl = `https://${organizationName}.github.io`;
 
 const cacheDir = path.resolve(
-	new URL('.', import.meta.url).pathname,
+	// fileURLToPath, not URL.pathname: on Windows the latter yields `/C:/...`,
+	// which path.resolve turns into `C:\C:\...`.
+	fileURLToPath(new URL('.', import.meta.url)),
 	'./.previous-typings-cache/'
 );
 const typedocWatch = process.env.TYPEDOC_WATCH === 'true';
@@ -176,7 +179,7 @@ function typedocPluginForVersion(version) {
 				// @ts-ignore
 				entryPoints: [getTypingsCacheFilePath(version)],
 				out: path.resolve(
-					new URL('.', import.meta.url).pathname,
+					fileURLToPath(new URL('.', import.meta.url)),
 					`./versioned_docs/version-${version}/api`
 				),
 			});
@@ -258,11 +261,14 @@ const getConfig = async () => {
 				{
 					blog: false,
 					docs: {
-						sidebarPath: new URL('./sidebars.js', import.meta.url).pathname,
+						sidebarPath: fileURLToPath(
+							new URL('./sidebars.js', import.meta.url)
+						),
 					},
 					theme: {
-						customCss: new URL('./src/css/custom.css', import.meta.url)
-							.pathname,
+						customCss: fileURLToPath(
+							new URL('./src/css/custom.css', import.meta.url)
+						),
 					},
 				},
 			],
@@ -415,8 +421,9 @@ const getConfig = async () => {
 					id: 'tutorials',
 					path: 'tutorials',
 					routeBasePath: 'tutorials',
-					sidebarPath: new URL('./sidebars-tutorials.js', import.meta.url)
-						.pathname,
+					sidebarPath: fileURLToPath(
+						new URL('./sidebars-tutorials.js', import.meta.url)
+					),
 				},
 			],
 			[
